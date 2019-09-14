@@ -297,6 +297,7 @@ SCAMPError_t cpu_kernel_self_join_lower(Tile* t) {
       combine_profile(mpb, mpib,
                       reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
                       height);
+
     case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
       size_t height = t->get_tile_height() - t->info()->mp_window + 1;
       size_t width = t->get_tile_width() - t->info()->mp_window + 1;
@@ -335,52 +336,92 @@ SCAMPError_t cpu_kernel_self_join_lower(Tile* t) {
 }
 
 SCAMPError_t cpu_kernel_ab_join_upper(Tile* t) {
-  if (t->info()->profile_type != PROFILE_TYPE_1NN_INDEX) {
-    return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
-  }
   if (t->info()->fp_type != PRECISION_DOUBLE) {
     return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
+  switch(t->infor()->profile_type){
+    case PROFILE_TYPE_1NN_INDEX:
+      size_t height = t->get_tile_height() - t->info()->mp_window + 1;
+      size_t width = t->get_tile_width() - t->info()->mp_window + 1;
 
-  size_t height = t->get_tile_height() - t->info()->mp_window + 1;
-  size_t width = t->get_tile_width() - t->info()->mp_window + 1;
+      // TODO(zpzim): we should allocate these vectors in the tile constructor
+      // We are taking some amount of perfomance penalty for allocating them here
+      std::vector<double> mpa(width), mpb(height);
+      std::vector<int32_t> mpia(width), mpib(height);
 
-  // TODO(zpzim): we should allocate these vectors in the tile constructor
-  // We are taking some amount of perfomance penalty for allocating them here
-  std::vector<double> mpa(width), mpb(height);
-  std::vector<int32_t> mpia(width), mpib(height);
+      // TODO(zpzim): These splits should be done during the InitProfile method in
+      // tile.cpp
+      split_profile(&mpa, &mpia,
+                    reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
+                    width);
+      split_profile(&mpb, &mpib,
+                    reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
+                    height);
 
-  // TODO(zpzim): These splits should be done during the InitProfile method in
-  // tile.cpp
-  split_profile(&mpa, &mpia,
-                reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
-                width);
-  split_profile(&mpb, &mpib,
-                reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
-                height);
+      std::pair<int, int> exclusion_pair = t->get_exclusion_for_ab_join(true);
+      if (t->info()->computing_rows) {
+        partialcross_kern<true, true>(
+            t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
+            t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
+            exclusion_pair.first, exclusion_pair.second);
+      } else {
+        partialcross_kern<false, true>(
+            t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
+            t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
+            exclusion_pair.first, exclusion_pair.second);
+      }
+      // TODO(zpzim): These combines should be done in the CopyProfileToHost method
+      // in tile.cpp
+      combine_profile(mpa, mpia,
+                      reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
+                      width);
+      combine_profile(mpb, mpib,
+                      reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
+                      height);
+    case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
+      size_t height = t->get_tile_height() - t->info()->mp_window + 1;
+      size_t width = t->get_tile_width() - t->info()->mp_window + 1;
+      double threshold = 0.9; //random number assigned
+      // TODO(zpzim): we should allocate these vectors in the tile constructor
+      // We are taking some amount of perfomance penalty for allocating them here
+      std::vector<double> mpa(width), mpb(height);
+      std::vector<int32_t> mpia(width), mpib(height);
 
-  std::pair<int, int> exclusion_pair = t->get_exclusion_for_ab_join(true);
-  if (t->info()->computing_rows) {
-    partialcross_kern<true, true>(
-        t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
-        t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
-        exclusion_pair.first, exclusion_pair.second);
-  } else {
-    partialcross_kern<false, true>(
-        t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
-        t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
-        exclusion_pair.first, exclusion_pair.second);
+      // TODO(zpzim): These splits should be done during the InitProfile method in
+      // tile.cpp
+      split_profile(&mpa, &mpia,
+                    reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
+                    width);
+      split_profile(&mpb, &mpib,
+                    reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
+                    height);
+
+      std::pair<int, int> exclusion_pair = t->get_exclusion_for_ab_join(true);
+      if (t->info()->computing_rows) {
+        partialcross_kern_allneighbors<true, true>(
+            t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
+            t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
+            exclusion_pair.first, exclusion_pair.second, threshold);
+      } else {
+        partialcross_kern_allneighbors<false, true>(
+            t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
+            t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
+            exclusion_pair.first, exclusion_pair.second, threshold);
+      }
+      // TODO(zpzim): These combines should be done in the CopyProfileToHost method
+      // in tile.cpp
+      combine_profile(mpa, mpia,
+                      reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
+                      width);
+      combine_profile(mpb, mpib,
+                      reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
+                      height);
+    default:
+      return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
-  // TODO(zpzim): These combines should be done in the CopyProfileToHost method
-  // in tile.cpp
-  combine_profile(mpa, mpia,
-                  reinterpret_cast<uint64_t*>(t->profile_a()),  // NOLINT
-                  width);
-  combine_profile(mpb, mpib,
-                  reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
-                  height);
   return SCAMP_NO_ERROR;
 }
+
 SCAMPError_t cpu_kernel_ab_join_lower(Tile* t) {
   if (t->info()->profile_type != PROFILE_TYPE_1NN_INDEX) {
     return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
