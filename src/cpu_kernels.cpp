@@ -128,6 +128,42 @@ void partialcross_kern(
   }
 }
 */
+
+//all neighbors function
+struct MP{
+  double mp;
+  int row;
+  int col;
+};
+
+template <bool computing_rows, bool computing_cols>
+static inline void partialcross_kern_allneighbors( //static inline
+    double* __restrict cov, double* __restrict mpa, int* __restrict mpia,
+    double* __restrict mpb, int* __restrict mpib, const double* __restrict dfa,
+    const double* __restrict dga, const double* __restrict invna,
+    const double* __restrict dfb, const double* __restrict dgb,
+    const double* __restrict invnb, const int amx, const int bmx,
+    const int amin, const int upper_excl, int threshold) {
+  
+  std:vector<MP> list_of_matches;
+
+  for (int ia = amin; ia < amx - upper_excl + 1; ia++) {
+    int mx = std::min(amx - ia, bmx);
+    for (int ib = 0; ib < mx; ib++) {
+      double cr = cov[ia] * invna[ib + ia] * invnb[ib];
+      if (cr > threshold) {
+        MP * match = new MP;
+        match->mp = cr;
+        match->row = ib;
+        match->col = ib+ia;
+        list_of_matches.push_back(match);
+      }
+      cov[ia] += dfa[ib + ia] * dgb[ib];
+      cov[ia] += dfb[ib] * dga[ib + ia];
+    }
+  }
+}
+
 void split_profile(std::vector<double>* mp, std::vector<int32_t>* mpi,
                    const uint64_t* profile, int len) {
   mp_entry e;
