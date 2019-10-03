@@ -130,11 +130,6 @@ void partialcross_kern(
 */
 
 //all neighbors function
-struct MP{
-  double mp;
-  int row;
-  int col;
-};
 
 template <bool computing_rows, bool computing_cols>
 static inline void partialcross_kern_allneighbors( //static inline
@@ -142,20 +137,21 @@ static inline void partialcross_kern_allneighbors( //static inline
     const double* __restrict dga, const double* __restrict invna,
     const double* __restrict dfb, const double* __restrict dgb,
     const double* __restrict invnb, const int amx, const int bmx,
-    const int amin, const int upper_excl, double threshold) {
+    const int amin, const int upper_excl, const double threshold) {
   
-  //std:vector<MP> list_of_matches; //mpa used as list of matches
-
+  int32_t pos = 0
+  int64_t max_size = mpa.size();
   for (int ia = amin; ia < amx - upper_excl + 1; ia++) {
     int mx = std::min(amx - ia, bmx);
     for (int ib = 0; ib < mx; ib++) {
       double cr = cov[ia] * invna[ib + ia] * invnb[ib];
       if (cr > threshold) {
-        MP * match = new MP;
-        match->mp = cr;
-        match->row = ib;
-        match->col = ib+ia;
-        mpa.push_back(match);
+        if (pos < max_size) {
+          mpa[pos].row = ib;
+          mpa[pos].col = ib + ia;
+          mpa[pos].corr = cr;
+          pos++;
+        }
       }
       cov[ia] += dfa[ib + ia] * dgb[ib];
       cov[ia] += dfb[ib] * dga[ib + ia];
@@ -222,13 +218,13 @@ SCAMPError_t cpu_kernel_self_join_upper(Tile* t) {
       combine_profile(mpb, mpib,
                       reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
                       height);
+      break;
     case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
       size_t height = t->get_tile_height() - t->info()->mp_window + 1;
       size_t width = t->get_tile_width() - t->info()->mp_window + 1;
-      double threshold = 0.9; // random number assigned
       // TODO(zpzim): we should allocate these vectors in the tile constructor
       // We are taking some amount of perfomance penalty for allocating them here
-      std::vector<MP> mpa; //MP is a struct on line 133
+      std::vector<SCAMPmatch> mpa(t->info()->max_matches_per_tile);
       //std::vector<int32_t> mpia(width), mpib(height);
 
       // TODO(zpzim): These splits should be done during the InitProfile method in
@@ -244,7 +240,7 @@ SCAMPError_t cpu_kernel_self_join_upper(Tile* t) {
       partialcross_kern_allneighbors<true, true>(t->QT(), mpa.data(),
                                     t->dfa(), t->dga(), t->normsa(),
                                     t->dfb(), t->dgb(), t->normsb(), width, height,
-                                    exclusion.first, exclusion.second, threshold);
+                                    exclusion.first, exclusion.second, t->info()->opt_args.threshold);
       // TODO(zpzim): These combines should be done in the CopyProfileToHost method
       // in tile.cpp
       // combine_profile(mpa, mpia,
@@ -253,6 +249,7 @@ SCAMPError_t cpu_kernel_self_join_upper(Tile* t) {
       // combine_profile(mpb, mpib,
       //                 reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
       //                 height);
+      break;
     default:
       return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
@@ -296,14 +293,13 @@ SCAMPError_t cpu_kernel_self_join_lower(Tile* t) {
       combine_profile(mpb, mpib,
                       reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
                       height);
-
+      break;
     case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
       size_t height = t->get_tile_height() - t->info()->mp_window + 1;
       size_t width = t->get_tile_width() - t->info()->mp_window + 1;
-      double threshold = 0.9; //random number assigned
       // TODO(zpzim): we should allocate these vectors in the tile constructor
       // We are taking some amount of perfomance penalty for allocating them here
-      std::vector<MP> mpb;
+      std::vector<SCAMPmatch> mpb(t->info()->max_matches_per_tile);
       //std::vector<int32_t> mpia(width), mpib(height);
 
       // TODO(zpzim): These splits should be done during the InitProfile method in
@@ -319,7 +315,7 @@ SCAMPError_t cpu_kernel_self_join_lower(Tile* t) {
       partialcross_kern_allneighbors<true, true>(t->QT(), mpb.data(), 
                                     t->dfb(), t->dgb(), t->normsb(),
                                     t->dfa(), t->dga(), t->normsa(), height, width,
-                                    exclusion.first, exclusion.second, threshold);
+                                    exclusion.first, exclusion.second, t->info()->opt_args.threshold);
       // TODO(zpzim): These combines should be done in the CopyProfileToHost method
       // in tile.cpp
       // combine_profile(mpa, mpia,
@@ -328,6 +324,7 @@ SCAMPError_t cpu_kernel_self_join_lower(Tile* t) {
       // combine_profile(mpb, mpib,
       //                 reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
       //                 height);
+      break;
     default:
       return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
@@ -377,13 +374,13 @@ SCAMPError_t cpu_kernel_ab_join_upper(Tile* t) {
       combine_profile(mpb, mpib,
                       reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
                       height);
+      break;
     case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
       size_t height = t->get_tile_height() - t->info()->mp_window + 1;
       size_t width = t->get_tile_width() - t->info()->mp_window + 1;
-      double threshold = 0.9; //random number assigned
       // TODO(zpzim): we should allocate these vectors in the tile constructor
       // We are taking some amount of perfomance penalty for allocating them here
-      std::vector<MP> mpa; //MP is a struct on line 133
+      std::vector<SCAMPmatch> mpa(t->info()->max_matches_per_tile); //MP is a struct on line 133
       //std::vector<int32_t> mpia(width), mpib(height);
 
       // TODO(zpzim): These splits should be done during the InitProfile method in
@@ -400,7 +397,7 @@ SCAMPError_t cpu_kernel_ab_join_upper(Tile* t) {
         partialcross_kern_allneighbors<true, true>(
             t->QT(), mpa.data(), t->dfa(),
             t->dga(), t->normsa(), t->dfb(), t->dgb(), t->normsb(), width, height,
-            exclusion_pair.first, exclusion_pair.second, threshold);
+            exclusion_pair.first, exclusion_pair.second, t->info()->opt_args.threshold);
       // } else {
       //   partialcross_kern_allneighbors<false, true>(
       //       t->QT(), mpa.data(), mpia.data(), mpb.data(), mpib.data(), t->dfa(),
@@ -415,6 +412,7 @@ SCAMPError_t cpu_kernel_ab_join_upper(Tile* t) {
       // combine_profile(mpb, mpib,
       //                 reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
       //                 height);
+      break;
     default:
       return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
@@ -467,14 +465,14 @@ SCAMPError_t cpu_kernel_ab_join_lower(Tile* t) {
       combine_profile(mpb, mpib,
                       reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
                       height);
-
+      break;
     case PROFILE_TYPE_APPROX_ALL_NEIGHBORS:
       size_t height = t->get_tile_height() - t->info()->mp_window + 1;
       size_t width = t->get_tile_width() - t->info()->mp_window + 1;
-      double threshold = 0.9; //random number added
+      
       // TODO(zpzim): we should allocate these vectors in the tile constructor
       // We are taking some amount of perfomance penalty for allocating them here
-      std::vector<MP> mpb;
+      std::vector<SCAMPmatch> mpb(t->info()->max_matches_per_tile);
       //std::vector<int32_t> mpia(width), mpib(height);
 
       // TODO(zpzim): These splits should be done during the InitProfile method in
@@ -491,7 +489,7 @@ SCAMPError_t cpu_kernel_ab_join_lower(Tile* t) {
         partialcross_kern_allneighbors<true, true>(
             t->QT(), mpb.data(), t->dfb(),
             t->dgb(), t->normsb(), t->dfa(), t->dga(), t->normsa(), height, width,
-            exclusion_pair.first, exclusion_pair.second, threshold);
+            exclusion_pair.first, exclusion_pair.second, t->info()->opt_args.threshold);
       // } else {
       //   partialcross_kern_allneighbors<true, false>(
       //       t->QT(), mpb.data(), mpib.data(), mpa.data(), mpia.data(), t->dfb(),
@@ -506,6 +504,7 @@ SCAMPError_t cpu_kernel_ab_join_lower(Tile* t) {
       // combine_profile(mpb, mpib,
       //                 reinterpret_cast<uint64_t*>(t->profile_b()),  // NOLINT
       //                 height);
+      break;
     default:
       return SCAMP_FUNCTIONALITY_UNIMPLEMENTED;
   }
